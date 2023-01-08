@@ -110,11 +110,7 @@ impl CodeGen {
         fn_builder.seal_block(block);
 
         let mem = fn_builder.ins().global_value(pointer, local_data);
-        let zero = fn_builder.ins().iconst(types::I32, 0);
         let zero_ptr = fn_builder.ins().iconst(pointer, 0);
-        let errno = Variable::new(0);
-        fn_builder.declare_var(errno, types::I32);
-        fn_builder.def_var(errno, zero);
         let offset = Variable::new(1);
         fn_builder.declare_var(offset, pointer);
         fn_builder.def_var(offset, zero_ptr);
@@ -168,9 +164,7 @@ impl CodeGen {
                         mem_offset,
                         Offset32::new(0),
                     );
-                    let ret = fn_builder.ins().call(local_putchar, &[val]);
-                    let e = fn_builder.inst_results(ret)[0];
-                    fn_builder.def_var(errno, e);
+                    fn_builder.ins().call(local_putchar, &[val]);
                 }
                 Token::Input => {
                     let mem_offset = fn_builder.ins().iadd(mem, offset_val);
@@ -182,7 +176,7 @@ impl CodeGen {
                 }
                 Token::LoopStart => {
                     let next_block = fn_builder.create_block();
-                    fn_builder.ins().jump(next_block, &[offset_val]);
+                    fn_builder.ins().jump(next_block, &[]);
                     jumps.push(next_block);
                     fn_builder.switch_to_block(next_block);
                 }
@@ -195,20 +189,18 @@ impl CodeGen {
                         Offset32::new(0),
                     );
                     let jump_target = jumps.pop().unwrap();
-                    fn_builder.ins().brnz(val, jump_target, &[offset_val]);
+                    fn_builder.ins().brnz(val, jump_target, &[]);
                     let next_block = fn_builder.create_block();
-                    fn_builder.ins().jump(next_block, &[offset_val]);
+                    fn_builder.ins().jump(next_block, &[]);
                     fn_builder.switch_to_block(next_block);
                 }
             }
         }
 
-        assert!(jumps.is_empty());
-
-        //let val = fn_builder.use_var(errno);
         let _ = fn_builder.use_var(offset);
         let val = fn_builder.ins().iconst(types::I32, 0);
         fn_builder.ins().return_(&[val]);
+        fn_builder.seal_all_blocks();
         fn_builder.finalize();
 
         if print_ir {
