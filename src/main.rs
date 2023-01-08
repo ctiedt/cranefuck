@@ -33,7 +33,8 @@ struct Opt {
     /// The target to compile for. Defaults to the host target.
     target: Option<String>,
     /// Should the compiler print the generated IR to stdout?
-    print_ir: Option<bool>,
+    #[structopt(long)]
+    print_ir: bool,
 }
 
 #[allow(unused_macros)]
@@ -248,7 +249,7 @@ fn main() -> color_eyre::Result<()> {
     } else {
         PathBuf::from("a.out")
     };
-    let print_ir = opt.print_ir.unwrap_or(true);
-    codegen.compile(opt.output.unwrap_or(default_output), target, print_ir);
+
+    codegen.compile(opt.output.unwrap_or(default_output), target, opt.print_ir);
     Ok(())
 }
