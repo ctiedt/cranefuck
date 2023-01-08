@@ -11,12 +11,12 @@ use cranelift::{
         ir::{Function, UserFuncName},
         Context,
     },
-    prelude::{isa::CallConv, types::I32, *},
+    prelude::*,
 };
 use cranelift_module::{DataContext, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use parse::Program;
-use target_lexicon::triple;
+use target_lexicon::Triple;
 
 use structopt::StructOpt;
 
@@ -29,6 +29,8 @@ struct Opt {
     input: PathBuf,
     /// Where to output to. Default is `a.out`
     output: Option<PathBuf>,
+    /// The target to compile for. Defaults to the host target.
+    target: Option<String>,
 }
 
 struct CodeGen {
@@ -40,20 +42,21 @@ impl CodeGen {
         Self { program }
     }
 
-    fn compile(&self, output: impl AsRef<Path>) {
+    fn compile(&self, output: impl AsRef<Path>, target: Triple) {
         let mut shared_builder = settings::builder();
         shared_builder.enable("is_pic").unwrap();
         let shared_flags = settings::Flags::new(shared_builder);
 
-        let isa_builder = isa::lookup(triple!("x86_64-unknown-linux-gnu")).unwrap();
+        let isa_builder = isa::lookup(target).unwrap();
         let isa = isa_builder.finish(shared_flags).unwrap();
+        let call_conv = isa.default_call_conv();
 
         let obj_builder =
             ObjectBuilder::new(isa, "main", cranelift_module::default_libcall_names()).unwrap();
         let mut obj_module = ObjectModule::new(obj_builder);
 
-        let mut sig = Signature::new(CallConv::SystemV);
-        sig.returns.push(AbiParam::new(I32));
+        let mut sig = Signature::new(call_conv);
+        sig.returns.push(AbiParam::new(types::I32));
         let mut func = Function::with_name_signature(UserFuncName::user(0, 0), sig);
         let mut func_ctx = FunctionBuilderContext::new();
         let mut fn_builder = FunctionBuilder::new(&mut func, &mut func_ctx);
@@ -102,8 +105,6 @@ impl CodeGen {
         for instr in &self.program.tokens {
             match instr {
                 Token::Right(count) => {
-                    //let val = fn_builder.ins().iadd(mem, one_ptr);
-                    //fn_builder.ins().store(MemFlags::new(), val, p, Offset)
                     let offset_val = fn_builder.use_var(offset);
                     let to_add = fn_builder.ins().iconst(pointer, *count as i64);
                     let new_offset = fn_builder.ins().iadd(offset_val, to_add);
@@ -187,8 +188,7 @@ impl CodeGen {
             }
         }
 
-        let val = fn_builder.ins().iconst(I32, 0);
-        //let val = fn_builder.use_var(errno);
+        let val = fn_builder.use_var(errno);
         fn_builder.ins().return_(&[val]);
         fn_builder.finalize();
 
@@ -213,8 +213,17 @@ fn main() -> color_eyre::Result<()> {
     let opt = Opt::from_args();
     let source = std::fs::read_to_string(opt.input)?;
     let program = Program::from(source.as_str());
-    //dbg!(&program);
     let codegen = CodeGen::new(program);
-    codegen.compile(opt.output.unwrap_or(PathBuf::from("a.out")));
+    let target = if let Some(target) = opt.target {
+        Triple::from_str(&target).unwrap()
+    } else {
+        Triple::host()
+    };
+    let default_output = if cfg!(windows) {
+        PathBuf::from("a.obj")
+    } else {
+        PathBuf::from("a.out")
+    };
+    codegen.compile(opt.output.unwrap_or(default_output), target);
     Ok(())
 }
