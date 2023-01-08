@@ -1,7 +1,19 @@
 # A brainfuck compiler using cranelift
 
-This is a (still relatively barebones) compiler for the brainfuck programming language.
-It is currently not usable for all brainfuck use cases yet.
+This is a compiler for the brainfuck programming language based on the [cranelift](https://docs.rs/cranelift) framework.
+
+## Examples
+
+This project includes various examples that should all compile and run (please open an issue if
+any of them doesn't work for you!).
+
+You can also use the `print_bf.py` file to generate brainfuck code to print a string.
+
+## Linking
+
+This project only provides the compiler. To get an executable for your platform, you will need
+to link the object file built by the compiler. Scripts are included to link with `ld` on
+Linux and `link.exe` on Windows.
 
 ## Building on Windows
 

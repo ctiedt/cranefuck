@@ -2,6 +2,7 @@ mod parse;
 
 use std::fs::File;
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -27,10 +28,25 @@ use crate::parse::Token;
 struct Opt {
     /// The input brainfuck file
     input: PathBuf,
-    /// Where to output to. Default is `a.out`
+    /// Where to output to. Default is `a.out` (`a.obj` on windows)
     output: Option<PathBuf>,
     /// The target to compile for. Defaults to the host target.
     target: Option<String>,
+    /// Should the compiler print the generated IR to stdout?
+    print_ir: Option<bool>,
+}
+
+#[allow(unused_macros)]
+macro_rules! dbg_print {
+    ($fn_builder:ident, $putchar:ident, $val:literal) => {
+        for c in $val.chars() {
+            let c_val = u8::try_from(c).unwrap();
+            let val = $fn_builder.ins().iconst(types::I8, c_val as i64);
+            $fn_builder.ins().call($putchar, &[val]);
+        }
+        let val = $fn_builder.ins().iconst(types::I8, 10);
+        $fn_builder.ins().call($putchar, &[val]);
+    };
 }
 
 struct CodeGen {
@@ -42,7 +58,7 @@ impl CodeGen {
         Self { program }
     }
 
-    fn compile(&self, output: impl AsRef<Path>, target: Triple) {
+    fn compile(&self, output: impl AsRef<Path>, target: Triple, print_ir: bool) {
         let mut shared_builder = settings::builder();
         shared_builder.enable("is_pic").unwrap();
         let shared_flags = settings::Flags::new(shared_builder);
@@ -103,21 +119,19 @@ impl CodeGen {
         fn_builder.def_var(offset, zero_ptr);
         let mut jumps = Vec::new();
         for instr in &self.program.tokens {
+            let offset_val = fn_builder.use_var(offset);
             match instr {
                 Token::Right(count) => {
-                    let offset_val = fn_builder.use_var(offset);
                     let to_add = fn_builder.ins().iconst(pointer, *count as i64);
                     let new_offset = fn_builder.ins().iadd(offset_val, to_add);
                     fn_builder.def_var(offset, new_offset);
                 }
                 Token::Left(count) => {
-                    let offset_val = fn_builder.use_var(offset);
                     let to_add = fn_builder.ins().iconst(pointer, *count as i64);
                     let new_offset = fn_builder.ins().isub(offset_val, to_add);
                     fn_builder.def_var(offset, new_offset);
                 }
                 Token::Increment(count) => {
-                    let offset_val = fn_builder.use_var(offset);
                     let mem_offset = fn_builder.ins().iadd(mem, offset_val);
                     let val = fn_builder.ins().load(
                         types::I8,
@@ -132,7 +146,6 @@ impl CodeGen {
                         .store(MemFlags::new(), val, mem_offset, Offset32::new(0));
                 }
                 Token::Decrement(count) => {
-                    let offset_val = fn_builder.use_var(offset);
                     let mem_offset = fn_builder.ins().iadd(mem, offset_val);
                     let val = fn_builder.ins().load(
                         types::I8,
@@ -147,7 +160,6 @@ impl CodeGen {
                         .store(MemFlags::new(), val, mem_offset, Offset32::new(0));
                 }
                 Token::Output => {
-                    let offset_val = fn_builder.use_var(offset);
                     let mem_offset = fn_builder.ins().iadd(mem, offset_val);
                     let val = fn_builder.ins().load(
                         types::I8,
@@ -160,7 +172,6 @@ impl CodeGen {
                     fn_builder.def_var(errno, e);
                 }
                 Token::Input => {
-                    let offset_val = fn_builder.use_var(offset);
                     let mem_offset = fn_builder.ins().iadd(mem, offset_val);
                     let res = fn_builder.ins().call(local_getchar, &[]);
                     let val = fn_builder.inst_results(res)[0];
@@ -170,29 +181,42 @@ impl CodeGen {
                 }
                 Token::LoopStart => {
                     let next_block = fn_builder.create_block();
-                    fn_builder.ins().jump(next_block, &[]);
+                    fn_builder.ins().jump(next_block, &[offset_val]);
                     jumps.push(next_block);
                     fn_builder.switch_to_block(next_block);
                 }
                 Token::LoopEnd => {
-                    let val =
-                        fn_builder
-                            .ins()
-                            .load(types::I8, MemFlags::new(), mem, Offset32::new(0));
+                    let mem_offset = fn_builder.ins().iadd(mem, offset_val);
+                    let val = fn_builder.ins().load(
+                        types::I8,
+                        MemFlags::new(),
+                        mem_offset,
+                        Offset32::new(0),
+                    );
                     let jump_target = jumps.pop().unwrap();
-                    fn_builder.ins().brnz(val, jump_target, &[]);
+                    fn_builder.ins().brnz(val, jump_target, &[offset_val]);
                     let next_block = fn_builder.create_block();
-                    fn_builder.ins().jump(next_block, &[]);
+                    fn_builder.ins().jump(next_block, &[offset_val]);
                     fn_builder.switch_to_block(next_block);
                 }
             }
         }
 
-        let val = fn_builder.use_var(errno);
+        assert!(jumps.is_empty());
+
+        //let val = fn_builder.use_var(errno);
+        let _ = fn_builder.use_var(offset);
+        let val = fn_builder.ins().iconst(types::I32, 0);
         fn_builder.ins().return_(&[val]);
         fn_builder.finalize();
 
-        println!("{}", func.display());
+        if print_ir {
+            println!("{}", func.display());
+            let mut ir_file = File::create("a.clif").unwrap();
+            ir_file
+                .write_all(format!("{}", func.display()).as_bytes())
+                .unwrap();
+        }
 
         let mut context = Context::for_function(func);
 
@@ -224,6 +248,7 @@ fn main() -> color_eyre::Result<()> {
     } else {
         PathBuf::from("a.out")
     };
-    codegen.compile(opt.output.unwrap_or(default_output), target);
+    let print_ir = opt.print_ir.unwrap_or(true);
+    codegen.compile(opt.output.unwrap_or(default_output), target, print_ir);
     Ok(())
 }
