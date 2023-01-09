@@ -74,6 +74,10 @@ impl CodeGen {
 
         let mut sig = Signature::new(call_conv);
         sig.returns.push(AbiParam::new(types::I32));
+        let fid = obj_module
+            .declare_function("main", Linkage::Export, &sig)
+            .unwrap();
+
         let mut func = Function::with_name_signature(UserFuncName::user(0, 0), sig);
         let mut func_ctx = FunctionBuilderContext::new();
         let mut fn_builder = FunctionBuilder::new(&mut func, &mut func_ctx);
@@ -212,12 +216,6 @@ impl CodeGen {
         }
 
         let mut context = Context::for_function(func);
-
-        let mut sig = obj_module.make_signature();
-        sig.returns.push(AbiParam::new(types::I32));
-        let fid = obj_module
-            .declare_function("main", Linkage::Export, &sig)
-            .unwrap();
         obj_module.define_function(fid, &mut context).unwrap();
         let res = obj_module.finish();
 
